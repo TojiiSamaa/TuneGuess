@@ -138,6 +138,9 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
   const requireAdmin: express.RequestHandler = (req, res, next) => {
     if (req.auth === undefined) req.auth = authFromCookie(db, req.headers.cookie);
     const a = access(req);
+    if (a === 'ok' && !req.auth!.user.username) {
+      return void res.status(403).json({ error: 'Choisissez d\'abord votre identifiant.', code: 'USERNAME_REQUIRED' });
+    }
     if (a === 'ok') return next();
     const status = a === 'not_logged_in' ? 401 : 403;
     const messages: Record<Exclude<AdminAccess, 'ok'>, string> = {
@@ -382,7 +385,7 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
     for (const [k, def] of Object.entries(CONFIG_KEYS)) {
       if (k === 'gameDefaults' || !(k in body)) continue;
       let v = body[k];
-      if (k === 'jellyfinEnabled' && typeof v === 'boolean') v = String(v);
+      if ((k === 'jellyfinEnabled' || k === 'youtubeEnabled') && typeof v === 'boolean') v = String(v);
       if (v === null) { setConfig(db, k as ConfigKey, null); continue; }
       if (typeof v !== 'string' || v.length > 500) throw new AccountError('CONFIG_INVALID', `Valeur invalide : ${k}.`);
       // Secret vide = inchangé (le front ne connaît jamais la valeur actuelle).
