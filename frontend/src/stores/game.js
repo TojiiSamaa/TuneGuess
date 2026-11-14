@@ -5,7 +5,6 @@ import { sanitizeInput, MAX_NAME_LENGTH } from '@/utils/sanitize';
 import { API_BASE } from '@/config';
 
 let listenersBound = false;
-let roomsInterval = null;
 let oauthHandled = false;
 
 export const useGameStore = defineStore('game', () => {
@@ -17,15 +16,20 @@ export const useGameStore = defineStore('game', () => {
   const roomCode = ref('');
   const roomName = ref('');
   const isHost = ref(false);
-  const settings = ref({ maxRounds: 10, roundDuration: 30 });
+  const settings = ref({ maxRounds: 10, roundDuration: 30, pointsMax: 1000, delaiGrace: 1, pointsMin: 100, bonusPremier: true });
+  // Réglages choisis dans la fenêtre de création, envoyés dès que le salon existe.
+  let pendingSettings = null;
 
   const joinCodeInput = ref('');
   const pendingInviteCode = ref(null);
   const roomError = ref('');
-  const spotifyLinked = ref(false);
   const youtubeLinked = ref(false);
   const jellyfinLinked = ref(false);
   const lastfmLinked = ref(false);
+  // Sources du compte connecté, lues par le serveur (store_account_tracks).
+  const accountLinked = ref(false);
+  const accountTracksCount = ref(0);
+  const accountLoading = ref(false);
   const lastfmUsername = ref(localStorage.getItem('lastfm_username') || '');
   const jellyfinServerUrl = ref(localStorage.getItem('jellyfin_server_url') || '');
   const jellyfinCode = ref(null);
@@ -40,7 +44,6 @@ export const useGameStore = defineStore('game', () => {
   const startTime = ref(null);
   const gameOver = ref(null);
   const roundState = ref(null);
-  const spotifyProfileName = ref(localStorage.getItem('spotify_profile_name') || '');
 
   const inviteLink = computed(() =>
     roomCode.value
@@ -48,7 +51,9 @@ export const useGameStore = defineStore('game', () => {
       : ''
   );
 
-  const canLaunch = computed(() => isHost.value && players.value.length >= 2);
+  // Prêt = a envoyé des pistes dans ce salon (indiqué par le serveur).
+  const readyCount = computed(() => players.value.filter((p) => p.ready).length);
+  const canLaunch = computed(() => isHost.value && readyCount.value >= 2);
 
   const sortedPlayers = computed(() =>
     [...players.value].sort((a, b) => b.score - a.score)
@@ -92,56 +97,6 @@ export const useGameStore = defineStore('game', () => {
   function emitTracks(tracks, jellyfin) {
     const payload = tracks.map(({ id, provider, name, artists, albumName, imageUrl, deezerId }) => ({ id, provider, name, artists, albumName, imageUrl, deezerId }));
     socket.emit('store_tracks', { tracks: payload, jellyfin });
-  }
-
-  async function loadSpotifyTracks(spotifyToken) {
-    roomError.value = '';
-    try {
-      // Récupérer le nom de profil Spotify (pour l'affichage dans la waiting)
-      try {
-        const meRes = await fetch('https://api.spotify.com/v1/me', {
-          headers: { Authorization: `Bearer ${spotifyToken}` },
-        });
-        if (meRes.ok) {
-          const me = await meRes.json();
-          const display = me?.display_name || me?.id || '';
-          if (display) {
-            spotifyProfileName.value = display;
-            localStorage.setItem('spotify_profile_name', display);
-          }
-        }
-      } catch {
-        // Non bloquant
-      }
-
-      const recentTracks = await fetchTracks(`${API_BASE}/api/tracks/recent?provider=spotify`, spotifyToken);
-      const topTracks = await fetchTracks(`${API_BASE}/api/tracks/top?provider=spotify`, spotifyToken);
-
-      const allTracks = [...recentTracks, ...topTracks];
-      const seenIds = new Set();
-      const uniqueTracks = [];
-      for (const track of allTracks) {
-        if (track?.id && !seenIds.has(track.id)) {
-          seenIds.add(track.id);
-          uniqueTracks.push(track);
-        }
-      }
-
-      if (uniqueTracks.length === 0) {
-        throw new Error("Aucun morceau trouvé dans votre bibliothèque Spotify.");
-      }
-
-      emitTracks(uniqueTracks);
-      spotifyLinked.value = true;
-    } catch (err) {
-      console.error("Erreur Spotify tracks loading:", err);
-      roomError.value = {
-        message: err.message,
-        code: err.code || 'API_ERROR',
-        provider: 'spotify'
-      };
-      spotifyLinked.value = false;
-    }
   }
 
   async function loadYouTubeTracks(youtubeToken) {
@@ -231,9 +186,7 @@ export const useGameStore = defineStore('game', () => {
 
     window.addEventListener('message', async (event) => {
       if (event.origin !== window.location.origin) return;
-      if (event.data?.type === 'spotify_token') {
-        await loadSpotifyTracks(event.data.token);
-      } else if (event.data?.type === 'youtube_token') {
+      if (event.data?.type === 'youtube_token') {
         await loadYouTubeTracks(event.data.token);
       }
     });
@@ -241,9 +194,7 @@ export const useGameStore = defineStore('game', () => {
     window.addEventListener('storage', async (event) => {
       if (event.key === 'oauth_token_received' && event.newValue) {
         const [provider, token] = event.newValue.split('|');
-        if (provider === 'spotify') {
-          await loadSpotifyTracks(token);
-        } else if (provider === 'youtube') {
+        if (provider === 'youtube') {
           await loadYouTubeTracks(token);
         }
         localStorage.removeItem('oauth_token_received');
@@ -261,6 +212,12 @@ export const useGameStore = defineStore('game', () => {
     });
 
     socket.on('room_joined', (data) => {
+      // Les pistes sont gardées par salon côté serveur : un nouveau salon repart sans source.
+      youtubeLinked.value = false;
+      jellyfinLinked.value = false;
+      lastfmLinked.value = false;
+      accountLinked.value = false;
+      accountTracksCount.value = 0;
       roomId.value = data.roomId;
       roomCode.value = data.code;
       roomName.value = data.name;
@@ -268,7 +225,22 @@ export const useGameStore = defineStore('game', () => {
       isHost.value = data.isHost;
       roomError.value = '';
       localStorage.setItem('active_room_code', data.code);
+      if (data.isHost && pendingSettings) {
+        updateSettings(pendingSettings);
+        pendingSettings = null;
+      }
       router.push({ name: 'waiting', params: { code: data.code } });
+    });
+
+    socket.on('account_tracks', (res) => {
+      accountLoading.value = false;
+      accountLinked.value = !!res.ok;
+      accountTracksCount.value = res.count || 0;
+      if (!res.ok) {
+        roomError.value = res.error || (res.errors?.length
+          ? `Sources du compte en erreur (${res.errors.join(', ')}) : reconnectez-les dans Mon compte.`
+          : 'Aucune piste sur les sources de votre compte : liez Last.fm, YouTube ou Jellyfin dans Mon compte.');
+      }
     });
 
     socket.on('room_settings', (s) => {
@@ -303,7 +275,7 @@ export const useGameStore = defineStore('game', () => {
     });
 
     socket.on('no_tracks', () => {
-      alert('Impossible de lancer : aucune musique enregistrée. Connectez Spotify avec des titres récents.');
+      alert('Impossible de lancer : aucun morceau inédit trouvé. Ajoutez une source (Last.fm, YouTube ou Jellyfin).');
     });
 
     socket.on('game_over', (data) => {
@@ -325,7 +297,7 @@ export const useGameStore = defineStore('game', () => {
     });
 
     refreshActiveRooms();
-    roomsInterval = setInterval(refreshActiveRooms, 8000);
+    setInterval(refreshActiveRooms, 8000);
   }
 
   function initFromRoute(router) {
@@ -349,8 +321,8 @@ export const useGameStore = defineStore('game', () => {
     // Le serveur renvoie le jeton dans le fragment (#), qui n'est jamais transmis au serveur.
     const hashParams = new URLSearchParams(window.location.hash.slice(1));
     const token = hashParams.get('token');
-    const provider = hashParams.get('provider') || 'spotify';
-    if (!token || oauthHandled) return;
+    const provider = hashParams.get('provider');
+    if (!token || !provider || oauthHandled) return;
     oauthHandled = true;
     history.replaceState(null, '', window.location.pathname + window.location.search);
 
@@ -385,9 +357,10 @@ export const useGameStore = defineStore('game', () => {
     }, 1000);
   }
 
-  function createRoom(roomLabel) {
+  function createRoom(roomLabel, initialSettings = null) {
     const safeName = requireName();
     if (!safeName) return;
+    pendingSettings = initialSettings;
     socket.emit('create_room', {
       roomName: sanitizeInput(roomLabel),
       playerName: safeName,
@@ -411,23 +384,6 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  function spotifyLogin() {
-    roomError.value = '';
-    const safeName = requireName();
-    if (!safeName) return;
-    if (roomCode.value) {
-      localStorage.setItem('active_room_code', roomCode.value);
-    }
-    const width = 600, height = 800;
-    const left = (window.screen.width - width) / 2;
-    const top = (window.screen.height - height) / 2;
-    window.open(
-      `${API_BASE}/auth/spotify/login`,
-      'SpotifyLogin',
-      `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,resizable=yes`
-    );
-  }
-
   function youtubeLogin() {
     roomError.value = '';
     const safeName = requireName();
@@ -443,6 +399,12 @@ export const useGameStore = defineStore('game', () => {
       'YouTubeLogin',
       `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,resizable=yes`
     );
+  }
+
+  function useAccountTracks() {
+    roomError.value = '';
+    accountLoading.value = true;
+    socket.emit('store_account_tracks');
   }
 
   function updateSettings(partial) {
@@ -532,7 +494,7 @@ export const useGameStore = defineStore('game', () => {
 
         await loadJellyfinTracks(data.token, serverUrl, data.userId);
       }
-    } catch (err) {
+    } catch {
       // Ignorer
     }
   }
@@ -585,10 +547,10 @@ export const useGameStore = defineStore('game', () => {
   }
 
   const linkedProvider = computed(() => {
-    if (spotifyLinked.value) return 'spotify';
     if (youtubeLinked.value) return 'youtube';
     if (jellyfinLinked.value) return 'jellyfin';
     if (lastfmLinked.value) return 'lastfm';
+    if (accountLinked.value) return 'compte';
     return null;
   });
 
@@ -610,7 +572,6 @@ export const useGameStore = defineStore('game', () => {
     joinCodeInput,
     pendingInviteCode,
     roomError,
-    spotifyLinked,
     copySuccess,
     currentTrack,
     gamePlayers,
@@ -618,9 +579,13 @@ export const useGameStore = defineStore('game', () => {
     startTime,
     gameOver,
     roundState,
-    spotifyProfileName,
     inviteLink,
     canLaunch,
+    readyCount,
+    accountLinked,
+    accountTracksCount,
+    accountLoading,
+    useAccountTracks,
     sortedPlayers,
     canHostProceed,
     MAX_NAME_LENGTH,
@@ -630,7 +595,6 @@ export const useGameStore = defineStore('game', () => {
     createRoom,
     joinRoom,
     joinFromInvite,
-    spotifyLogin,
     updateSettings,
     copyInviteLink,
     leaveRoom,

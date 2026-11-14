@@ -156,7 +156,8 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
 
   // --- Public ---
   router.get('/api/config/fournisseurs', (_req, res) => {
-    res.json({ ...providerStatus(db), passkey: true });
+    // Réglages par défaut des salons : la fenêtre de création part des mêmes valeurs que le serveur.
+    res.json({ ...providerStatus(db), passkey: true, gameDefaults: getGameDefaults(db) });
   });
 
   router.get('/api/me', (req, res) => {
