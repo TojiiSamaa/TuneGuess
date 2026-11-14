@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
@@ -18,9 +19,13 @@
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@tailwindcss/postcss": "^4.1.18",
     "@vitejs/plugin-vue": "^6.0.0",
     "autoprefixer": "^10.4.24",
+    "eslint": "^9.39.5",
+    "eslint-plugin-vue": "^10.12.1",
+    "globals": "^17.14.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "vite": "^7.2.4"
