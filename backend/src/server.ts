@@ -24,7 +24,7 @@ const app = express();
 // Aucune requête sortante sans délai : un fournisseur qui ne répond plus ne bloque pas le serveur.
 axios.defaults.timeout = 10_000;
 // TRUST_PROXY : relais dont on croit X-Forwarded-For (syntaxe `trust proxy` d'Express, ex.
-// « uniquelocal » pour Caddy→nginx en réseau Docker, ou un nombre de sauts). Absent : IP du socket.
+// le sous-réseau Docker de Caddy→nginx, ou un nombre de sauts ; pas « uniquelocal », qui couvre le LAN). Absent : IP du socket.
 const TRUST_PROXY = process.env.TRUST_PROXY?.trim();
 if (TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY);
 
