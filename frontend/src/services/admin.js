@@ -37,7 +37,7 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    let payload = null;
+    let payload;
     try {
       payload = JSON.parse(text);
     } catch (err) {
