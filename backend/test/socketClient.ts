@@ -8,8 +8,9 @@ export class Client {
   private waiters: (() => void)[] = [];
   constructor(public ws: WebSocket) {}
 
-  static async connect(url: string): Promise<Client> {
-    const client = new Client(new WebSocket(url));
+  // headers : cookie de session (WebSocket de Node/undici accepte des en-têtes, pas le navigateur).
+  static async connect(url: string, headers?: Record<string, string>): Promise<Client> {
+    const client = new Client(new WebSocket(url, headers ? ({ headers } as any) : undefined));
     clients.push(client);
     await new Promise<void>((resolve, reject) => {
       client.ws.onmessage = ({ data }) => {

@@ -102,16 +102,18 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
     setSessionCookie(res, token);
   }
 
-  router.use(express.json({ limit: '100kb' }));
+  // Seulement nos chemins : les autres routes du serveur (invités, proxy média) gardent leurs règles.
+  const OWN = ['/api', '/auth/compte'];
+  router.use(OWN, express.json({ limit: '100kb' }));
 
   // Session lue à chaque requête : rien n'est mis en cache côté processus.
-  router.use((req, _res, next) => {
+  router.use(OWN, (req, _res, next) => {
     req.auth = authFromCookie(db, req.headers.cookie);
     next();
   });
 
   // CSRF : toute écriture doit venir de l'origine publique du site.
-  router.use((req, res, next) => {
+  router.use(OWN, (req, res, next) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     if (req.get('origin') !== new URL(publicUrl(db)).origin) {
       res.status(403).json({ error: 'Origine refusée.', code: 'CSRF' });

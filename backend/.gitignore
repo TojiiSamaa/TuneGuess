@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 
 .env
+# Base SQLite et clé de dev (DATA_DIR)
+data
