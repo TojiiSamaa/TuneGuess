@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
 import express from 'express';
@@ -172,7 +173,7 @@ describe('Last.fm', () => {
   test('signature api_sig : md5 des paramètres triés + secret', () => {
     // md5("api_keyKmethodauth.getSessiontokenTSECRET")
     assert.equal(lastfmSignature({ method: 'auth.getSession', api_key: 'K', token: 'T', format: 'json' }, 'SECRET'),
-      require('crypto').createHash('md5').update('api_keyKmethodauth.getSessiontokenTSECRET').digest('hex'));
+      createHash('md5').update('api_keyKmethodauth.getSessiontokenTSECRET').digest('hex'));
   });
 });
 

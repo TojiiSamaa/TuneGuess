@@ -59,6 +59,7 @@ const now = () => Date.now();
 
 export function cleanDisplayName(raw: unknown, fallback = 'Joueur'): string {
   // Texte brut : l'échappement se fait à l'affichage (Vue).
+  // eslint-disable-next-line no-control-regex -- les caractères de contrôle sont retirés volontairement
   const name = typeof raw === 'string' ? raw.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 20) : '';
   return name || fallback;
 }
