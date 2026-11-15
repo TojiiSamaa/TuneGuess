@@ -36,6 +36,8 @@ export const useAccountStore = defineStore('account', {
       await api('/api/compte/deconnexion', { method: 'POST', body: {} }).catch(() => {});
       this.user = null;
       this.adminAccess = null;
+      // L'identité du socket est fixée à la connexion : sans rechargement, la partie s'enregistrerait encore sur ce compte.
+      window.location.assign('/');
     },
     /** Connexion par passkey (découvrable : le navigateur propose les passkeys du site). */
     async loginWithPasskey() {

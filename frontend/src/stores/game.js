@@ -41,6 +41,7 @@ export const useGameStore = defineStore('game', () => {
   const currentTrack = ref(null);
   const gamePlayers = ref([]);
   const answerResult = ref(null);
+  const ownTrack = ref(false);
   const startTime = ref(null);
   const gameOver = ref(null);
   const roundState = ref(null);
@@ -260,10 +261,16 @@ export const useGameStore = defineStore('game', () => {
       currentTrack.value = data.track;
       gamePlayers.value = data.players;
       answerResult.value = null;
+      ownTrack.value = false;
       startTime.value = Date.now();
       gameOver.value = null;
       roundState.value = null;
       router.push({ name: 'game' });
+    });
+
+    // Sa propre piste : on ne répond pas, les autres devinent.
+    socket.on('own_track', () => {
+      ownTrack.value = true;
     });
 
     socket.on('answer_result', (result) => {
@@ -434,7 +441,7 @@ export const useGameStore = defineStore('game', () => {
 
   // Les points sont calculés par le serveur à partir de l'heure de réception.
   function submitGuess(playerId) {
-    if (!startTime.value) return;
+    if (!startTime.value || ownTrack.value) return;
     socket.emit('answer', { playerId });
   }
 
@@ -576,6 +583,7 @@ export const useGameStore = defineStore('game', () => {
     currentTrack,
     gamePlayers,
     answerResult,
+    ownTrack,
     startTime,
     gameOver,
     roundState,
