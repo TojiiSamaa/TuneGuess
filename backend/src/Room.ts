@@ -232,6 +232,9 @@ export class Room {
     if (this.roundStartedAtMs === null || this.roundEndsAtMs === null || nowMs >= this.roundEndsAtMs) {
       throw new Error("Manche terminée.");
     }
+    if (playerId === this.currentQuestion.playerId) {
+      throw new Error("C'est ta piste : tu ne réponds pas à cette manche.");
+    }
 
     this.answeredPlayers.add(playerId);
     const isCorrect = answerPlayerId === this.currentQuestion.playerId;
@@ -276,7 +279,9 @@ export class Room {
   }
 
   public getRoundState(nowMs: number) {
-    const totalPlayers = this.players.length;
+    // Le propriétaire de la piste ne répond pas : il n'est pas attendu.
+    const owner = this.currentQuestion?.playerId;
+    const totalPlayers = this.players.filter((p) => p.id !== owner).length;
     const answeredCount = this.answeredPlayers.size;
     const timeExpired = this.roundEndsAtMs !== null ? nowMs >= this.roundEndsAtMs : false;
     const allAnswered = totalPlayers > 0 ? answeredCount >= totalPlayers : false;

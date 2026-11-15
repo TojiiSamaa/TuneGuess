@@ -13,6 +13,8 @@ export class Client {
     const client = new Client(new WebSocket(url, headers ? ({ headers } as any) : undefined));
     clients.push(client);
     await new Promise<void>((resolve, reject) => {
+      // Poignée de main refusée (Origin, limite) : erreur au lieu d'une attente sans fin.
+      client.ws.onerror = () => reject(new Error('connexion refusée'));
       client.ws.onmessage = ({ data }) => {
         const msg = String(data);
         if (msg.startsWith('44')) reject(new Error(JSON.parse(msg.slice(2)).message));

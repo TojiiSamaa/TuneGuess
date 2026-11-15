@@ -1,5 +1,5 @@
 import { Db } from './db';
-import { getConfig } from './config';
+import { getConfig, providerStatus } from './config';
 import { AccountError, ExternalProfile, ExternalProvider, getTokens, ProviderTokens, updateMeta, updateTokens, userIdentity } from './accounts';
 import { refreshAccess } from './oauth';
 import { randomToken } from './secrets';
@@ -66,7 +66,8 @@ async function fetchSource(db: Db, userId: number, provider: ExternalProvider): 
  * Une source en échec n'empêche pas les autres ; son état est noté pour l'onglet Connexions.
  */
 export async function loadAccountTracks(db: Db, userId: number): Promise<{ tracks: StoredTrack[]; jellyfin?: JellyfinSource; errors: string[] }> {
-  const linked = (['youtube', 'lastfm', 'jellyfin'] as const).filter((p) => userIdentity(db, userId, p));
+  const enabled = providerStatus(db);
+  const linked = (['youtube', 'lastfm', 'jellyfin'] as const).filter((p) => enabled[p] && userIdentity(db, userId, p));
   const results = await Promise.allSettled(linked.map((p) => fetchSource(db, userId, p)));
   const seen = new Set<string>();
   const tracks: StoredTrack[] = [];

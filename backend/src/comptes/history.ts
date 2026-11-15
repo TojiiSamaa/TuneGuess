@@ -76,11 +76,14 @@ export function userStats(db: Db, userId: number) {
   const a = db.prepare(`SELECT COALESCE(SUM(a.correct), 0) AS correct, AVG(a.time_ms) AS avgMs
     FROM game_answers a JOIN game_players gp ON gp.game_id = a.game_id AND gp.player_key = a.player_key
     WHERE gp.user_id = ?`).get(userId) as { correct: number; avgMs: number | null };
+  const owned = (db.prepare(`SELECT COUNT(*) AS n FROM game_rounds r
+    JOIN game_players gp ON gp.game_id = r.game_id AND gp.player_key = r.owner_key WHERE gp.user_id = ?`).get(userId) as { n: number }).n;
+  const answerable = s.rounds - owned;
   return {
     played: s.played,
     wins: s.wins,
     bestScore: s.bestScore,
-    accuracy: s.rounds > 0 ? a.correct / s.rounds : null,
+    accuracy: answerable > 0 ? a.correct / answerable : null,
     avgReactionMs: a.avgMs === null ? null : Math.round(a.avgMs),
   };
 }

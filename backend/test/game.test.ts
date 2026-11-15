@@ -101,11 +101,16 @@ test('réponse : points envoyés par le client ignorés ; double next_round = un
   await guest.next('new_question');
 
   const answer = room.currentQuestion!.playerId;
-  host.emit('answer', { playerId: answer, points: 999999 });
-  guest.emit('answer', { playerId: answer, points: 999999 });
-  await host.next('answer_result');
-  await guest.next('answer_result');
-  for (const p of room.players) assert.ok(p.score >= 100 && p.score <= 1200, `score ${p.score}`);
+  // Le propriétaire de la piste ne répond pas : seul l'autre joueur devine.
+  const [owner, guesser] = answer === host.id ? [host, guest] : [guest, host];
+  owner.emit('answer', { playerId: answer, points: 999999 });
+  guesser.emit('answer', { playerId: answer, points: 999999 });
+  await guesser.next('answer_result');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(owner.count('answer_result'), 0, 'réponse du propriétaire refusée');
+  const scoreOf = (c: typeof host) => room.players.find((p) => p.id === c.id)!.score;
+  assert.ok(scoreOf(guesser) >= 100 && scoreOf(guesser) <= 1200, `score ${scoreOf(guesser)}`);
+  assert.equal(scoreOf(owner), 0);
 
   host.emit('next_round');
   host.emit('next_round');

@@ -89,17 +89,27 @@ test('partie à deux comptes : prêts, tirage alterné, score au temps, historiq
     assert.equal(q.round, round);
     const owner = room.currentQuestion!.playerId;
     owners.push(owner);
-    // Manche 2 : réponse « tardive » (chrono reculé de 10 s) pour vérifier la décroissance.
-    if (round === 2) room.roundStartedAtMs! -= 10_000;
-    a.emit('answer', { playerId: owner });
+    const byId = new Map([[a.id, a], [b.id, b], [guest.id, guest]]);
+    const ownerClient = byId.get(owner)!;
+    await ownerClient.next('own_track');
+    // Le propriétaire tente de répondre : refusé, et il n'est pas attendu par « tout le monde a répondu ».
+    ownerClient.emit('answer', { playerId: owner });
+    // Deuxième réponse d'Alice : « tardive » (chrono reculé de 10 s) pour vérifier la décroissance.
+    if (owner !== a.id && pointsA.length === 1) room.roundStartedAtMs! -= 10_000;
     const wrong = [a.id, b.id, guest.id].find((id) => id !== owner)!;
-    b.emit('answer', { playerId: wrong });
-    guest.emit('answer', { playerId: owner });
-    const resA = await a.next('answer_result');
-    assert.equal(resA.correct, true);
-    pointsA.push(resA.points);
-    assert.equal((await b.next('answer_result')).points, 0);
-    await guest.next('answer_result');
+    if (owner !== a.id) a.emit('answer', { playerId: owner });
+    if (owner !== b.id) b.emit('answer', { playerId: wrong });
+    if (owner !== guest.id) guest.emit('answer', { playerId: owner });
+    if (owner !== a.id) {
+      const resA = await a.next('answer_result');
+      assert.equal(resA.correct, true);
+      pointsA.push(resA.points);
+    }
+    if (owner !== b.id) assert.equal((await b.next('answer_result')).points, 0);
+    if (owner !== guest.id) await guest.next('answer_result');
+    assert.equal(ownerClient.count('answer_result'), 0, 'réponse du propriétaire refusée');
+    assert.equal(room.getRoundState(Date.now()).allAnswered, true);
+    assert.equal(room.roundTimeout, null, 'manche close dès que les autres ont répondu');
     a.emit('next_round');
   }
   const over = await a.next('game_over');
@@ -116,8 +126,12 @@ test('partie à deux comptes : prêts, tirage alterné, score au temps, historiq
   assert.equal(hist.items[0].playerCount, 3);
   const detail = await (await fetch(`${base}/api/compte/historique/${hist.items[0].id}`, { headers: { cookie: alice.cookie } })).json();
   assert.equal(detail.rounds.length, 4);
-  assert.deepEqual(detail.rounds.map((r: any) => r.points), pointsA);
-  assert.ok(detail.rounds.every((r: any) => r.correct === 1 && r.timeMs >= 0));
+  const answered = detail.rounds.filter((r: any) => r.correct !== null);
+  assert.equal(answered.length, owners.filter((o) => o !== a.id).length, 'aucune réponse enregistrée sur ses propres pistes');
+  assert.deepEqual(answered.map((r: any) => r.points), pointsA);
+  assert.ok(answered.every((r: any) => r.correct === 1 && r.timeMs >= 0));
+  const stats = await (await fetch(`${base}/api/compte/accueil`, { headers: { cookie: alice.cookie } })).json();
+  assert.equal(stats.stats.accuracy, 1, 'précision sur les seules manches où elle pouvait répondre');
   assert.ok(detail.players.some((p: any) => p.username === 'bruno'));
 
   const histB = await (await fetch(`${base}/api/compte/historique`, { headers: { cookie: bruno.cookie } })).json();

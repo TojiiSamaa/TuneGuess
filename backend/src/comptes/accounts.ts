@@ -256,11 +256,16 @@ export function updateProfile(db: Db, userId: number, patch: { displayName?: unk
   return getUser(db, userId)!;
 }
 
+export const countPasskeys = (db: Db, userId: number) =>
+  (db.prepare('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?').get(userId) as { n: number }).n;
+
+// Vrai admin : amorçage terminé et au moins une passkey (un amorçage en cours ne compte pas).
 const activeAdmins = (db: Db) =>
-  (db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0").get() as { n: number }).n;
+  (db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0 AND bootstrap = 0 AND id IN (SELECT user_id FROM passkeys)").get() as { n: number }).n;
 
 function assertNotLastAdmin(db: Db, user: User) {
-  if (user.role === 'admin' && !user.disabled && activeAdmins(db) <= 1) {
+  const real = user.role === 'admin' && !user.disabled && !user.bootstrap && countPasskeys(db, user.id) > 0;
+  if (real && activeAdmins(db) <= 1) {
     throw new AccountError('LAST_ADMIN', 'Impossible : c\'est le dernier administrateur.', 409);
   }
 }

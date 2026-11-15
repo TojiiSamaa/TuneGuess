@@ -347,7 +347,13 @@ app.get('/api/proxy/jellyfin/:kind', async (req: Request, res: Response) => {
 });
 
 const server = http.createServer(app);
+// Le websocket ignore CORS : l'Origin est vérifiée à la poignée de main. Sans Origin (client hors
+// navigateur), pas de cookie de victime à réutiliser : accepté.
+const originAllowed = (origin: string | undefined) =>
+  !origin || corsOrigins.some((o) => (typeof o === 'string' ? o === origin : o.test(origin)));
+
 const io = new Server(server, {
+  allowRequest: (req, callback) => callback(null, originAllowed(req.headers.origin)),
   cors: { origin: corsOrigins }
 });
 
@@ -570,6 +576,7 @@ function startQuestion(room: Room, result: NonNullable<Awaited<ReturnType<Room['
   room.currentQuestion = result.selected;
   startRoundTimer(room);
   io.to(room.id).emit('new_question', result.questionData);
+  io.to(result.selected.playerId).emit('own_track');
   emitRoundState(room);
 }
 

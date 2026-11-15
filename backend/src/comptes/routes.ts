@@ -3,7 +3,7 @@ import { Db } from './db';
 import {
   AccountError, deleteUser, EXTERNAL_PROVIDERS, ExternalProvider, getUser, isExternalProvider, isLoginProvider, isUsernameAvailable,
   linkExternal, listConnections, listUsers, loginWithExternal, setDisabled, setRole, setUsername, suggestUsername, unlinkExternal,
-  updateProfile, User, validateUsername,
+  countPasskeys, updateProfile, User, validateUsername,
 } from './accounts';
 import { CONFIG_KEYS, ConfigKey, getConfig, providerStatus, publicUrl, setConfig } from './config';
 import {
@@ -256,11 +256,21 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
     res.json({ user: publicUser(setUsername(db, req.auth!.user.id, req.body?.username)) });
   });
 
+  // Admin terminé : ajouter ou retirer une passkey exige l'accès admin complet, sinon une session
+  // simplement connectée (Google, cookie volé) se fabriquerait une passkey puis l'admin.
+  // L'amorçage garde sa première passkey ; un admin sans aucune passkey peut en créer une.
+  const passkeyChange: express.RequestHandler = (req, res, next) => {
+    const user = req.auth!.user;
+    if (user.role !== 'admin' || user.bootstrap || access(req) === 'ok') return next();
+    if (req.method === 'POST' && countPasskeys(db, user.id) === 0) return next();
+    res.status(403).json({ error: 'Confirmez d\'abord avec une passkey existante (ou depuis Tailscale validé).', code: 'PASSKEY_REQUIRED' });
+  };
+
   // --- Passkeys : enregistrement (possible pendant l'amorçage) ---
-  router.post('/api/compte/passkeys/options', needs('setup'), async (req, res) => {
+  router.post('/api/compte/passkeys/options', needs('setup'), passkeyChange, async (req, res) => {
     res.json(await registrationOptions(db, rp(), req.auth!.user));
   });
-  router.post('/api/compte/passkeys', needs('setup'), async (req, res) => {
+  router.post('/api/compte/passkeys', needs('setup'), passkeyChange, async (req, res) => {
     const { user, session } = req.auth!;
     await verifyRegistration(db, rp(), user, req.body?.challengeId, req.body?.response, req.body?.name);
     if (user.bootstrap) {
@@ -271,7 +281,7 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
     res.json({ ok: true, user: publicUser(getUser(db, user.id)!) });
   });
   router.get('/api/compte/passkeys', needs('full'), (req, res) => res.json(listPasskeys(db, req.auth!.user.id)));
-  router.delete('/api/compte/passkeys/:id', needs('full'), (req, res) => {
+  router.delete('/api/compte/passkeys/:id', needs('full'), passkeyChange, (req, res) => {
     deletePasskey(db, getUser(db, req.auth!.user.id)!, req.params.id);
     res.json({ ok: true });
   });
