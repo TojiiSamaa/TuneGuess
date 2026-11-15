@@ -291,6 +291,13 @@ test('F. promotion : aucun droit admin avant l\'enrôlement (code unique 1 h + p
   await a.call(bs, 'PATCH', `/api/admin/users/${v.id}`, { role: 'user' });
   const sv = `tg_session=${createSession(db, v.id)}`;
   assert.equal((await a.call(sv, 'POST', '/api/compte/enrolement-admin/options', { code: p2.json.enrollment.code })).status, 401);
+
+  // Désactiver puis réactiver annule aussi l'enrôlement en attente.
+  const w = google(db, 'g6', 'autre3');
+  const p3 = await a.call(bs, 'PATCH', `/api/admin/users/${w.id}`, { role: 'admin' });
+  assert.equal((await a.call(bs, 'PATCH', `/api/admin/users/${w.id}`, { disabled: true })).status, 200);
+  assert.equal((await a.call(bs, 'PATCH', `/api/admin/users/${w.id}`, { disabled: false })).status, 200);
+  assert.equal(checkAdminEnrollment(db, w.id, p3.json.enrollment.code), false, 'code mort après désactivation');
   a.close();
 });
 

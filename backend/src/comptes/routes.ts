@@ -459,7 +459,10 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
       user = setRole(db, id, req.body.role);
       if (user.role === 'user') cancelAdminEnrollment(db, id);
     }
-    if (typeof req.body?.disabled === 'boolean') user = setDisabled(db, id, req.body.disabled);
+    if (typeof req.body?.disabled === 'boolean') {
+      user = setDisabled(db, id, req.body.disabled);
+      if (req.body.disabled) cancelAdminEnrollment(db, id); // désactiver annule un enrôlement en attente
+    }
     res.json({ user: publicUser(user) });
   });
 
