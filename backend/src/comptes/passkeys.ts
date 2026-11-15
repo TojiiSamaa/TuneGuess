@@ -127,8 +127,9 @@ export function deletePasskey(db: Db, user: User, id: unknown): void {
   const row = typeof id === 'string' ? db.prepare('SELECT id FROM passkeys WHERE id = ? AND user_id = ?').get(id, user.id) : undefined;
   if (!row) throw new AccountError('NOT_FOUND', 'Passkey introuvable.', 404);
   const count = (db.prepare('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?').get(user.id) as { n: number }).n;
-  if (user.role === 'admin' && count <= 1 && !user.tailscale_validated_at) {
-    throw new AccountError('LAST_PASSKEY', 'Impossible de révoquer la dernière passkey tant que l\'accès Tailscale n\'est pas validé.', 409);
+  // Même depuis Tailscale : un admin sans passkey pourrait s'en faire enregistrer une par une simple session.
+  if (user.role === 'admin' && count <= 1) {
+    throw new AccountError('LAST_PASSKEY', 'Impossible de révoquer la dernière passkey d\'un admin : ajoutez-en d\'abord une autre.', 409);
   }
   if (countLoginMethods(db, user.id) <= 1) {
     throw new AccountError('LAST_METHOD', 'Impossible de retirer votre dernière méthode de connexion.', 409);

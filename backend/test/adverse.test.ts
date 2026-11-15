@@ -7,9 +7,9 @@ import { migrate, Db } from '../src/comptes/db';
 import { setEncryptionKeyForTests } from '../src/comptes/secrets';
 import { AccountError, createUser, deleteUser, linkExternal, loginWithExternal, setRole, setUsername } from '../src/comptes/accounts';
 import { createSession, elevateSession } from '../src/comptes/sessions';
-import { consumeBootstrapCode, ensureBootstrap, RESET_CODE_TTL_MS } from '../src/comptes/bootstrap';
+import { checkAdminEnrollment, consumeBootstrapCode, ENROLL_CODE_TTL_MS, ensureBootstrap, RESET_CODE_TTL_MS } from '../src/comptes/bootstrap';
 import { webauthn } from '../src/comptes/passkeys';
-import { createAccountRouter } from '../src/comptes/routes';
+import { createAccountRouter, resetRateLimits } from '../src/comptes/routes';
 import { setConfig } from '../src/comptes/config';
 import { loadAccountTracks, trackProviders } from '../src/comptes/sources';
 import { sha256 } from '../src/comptes/secrets';
@@ -84,14 +84,14 @@ test('A. admin non élevé : ni ajout ni suppression de passkey, donc pas d\'adm
   a.close();
 });
 
-test('A. amorçage : la première passkey reste enregistrable ; admin sans passkey : peut en créer une', async () => {
+test('A. amorçage : la première passkey reste enregistrable ; admin sans passkey : aucun ajout sans élévation', async () => {
   const db = newDb();
   const code = ensureBootstrap(db, { log: () => {} })!;
   const boot = consumeBootstrapCode(db, code)!;
   const a = await app(db);
   assert.equal((await a.call(`tg_session=${createSession(db, boot.id)}`, 'POST', '/api/compte/passkeys/options', {})).status, 200);
-  const promoted = googleAdmin(db);
-  assert.equal((await a.call(`tg_session=${createSession(db, promoted.id)}`, 'POST', '/api/compte/passkeys/options', {})).status, 200);
+  const nokey = googleAdmin(db); // admin hérité, sans passkey : plus d'exception
+  assert.equal((await a.call(`tg_session=${createSession(db, nokey.id)}`, 'POST', '/api/compte/passkeys/options', {})).status, 403);
   a.close();
 });
 
@@ -169,3 +169,137 @@ after(() => {
   server.close();
 });
 
+
+// --- Contre-vérification (tests E et F de adverse2.test.ts, plus completeAdmins) ---
+async function proxiedApp(db: Db) {
+  const a = express();
+  a.set('trust proxy', true);
+  const { router, requireAdmin } = createAccountRouter(db);
+  a.use(router);
+  a.get('/api/admin/test', requireAdmin, (_q, r) => void r.json({ ok: true }));
+  const s = a.listen(0);
+  await new Promise((r) => s.once('listening', r));
+  const base = 'http://127.0.0.1:' + (s.address() as AddressInfo).port;
+  const call = async (cookie: string, method: string, path: string, body?: unknown, ip = '203.0.113.9') => {
+    const res = await fetch(base + path, {
+      method,
+      headers: { origin: ORIGIN, 'content-type': 'application/json', cookie, 'x-forwarded-for': ip },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const sc = res.headers.getSetCookie().map((c) => c.split(';')[0]).find((c) => c.startsWith('tg_session=') && c.length > 12);
+    return { status: res.status, json: await res.json().catch(() => null), cookie: sc };
+  };
+  return { call, close: () => s.close() };
+}
+type ProxiedApp = Awaited<ReturnType<typeof proxiedApp>>;
+const google = (db: Db, sub: string, name: string) => {
+  const { user } = loginWithExternal(db, { provider: 'google', subject: sub, label: 'x', displayName: name, accessToken: null });
+  setUsername(db, user.id, name);
+  return user;
+};
+const realAdmin = (db: Db, sub: string, name: string) => {
+  const u = google(db, sub, name);
+  db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(u.id);
+  addPasskey(db, `pk-${name}`, u.id);
+  return u;
+};
+/** Passkey fabriquée par l'attaquant (WebAuthn simulé), puis connexion avec : renvoie le statut de /api/admin/test. */
+async function takeover(a: ProxiedApp, cookie: string, id: string) {
+  const reg = mock.method(webauthn, 'verifyRegistrationResponse', async () => ({
+    verified: true, registrationInfo: { credential: { id, publicKey: new Uint8Array([9]), counter: 0, transports: [] } },
+  }));
+  const o = await a.call(cookie, 'POST', '/api/compte/passkeys/options', {});
+  const r = await a.call(cookie, 'POST', '/api/compte/passkeys', { challengeId: o.json?.challengeId, response: { id } });
+  reg.mock.restore();
+  if (r.status !== 200) return { registered: r.status, admin: null as number | null };
+  const auth = mock.method(webauthn, 'verifyAuthenticationResponse', async () => ({ verified: true, authenticationInfo: { newCounter: 1 } }));
+  const o2 = await a.call('', 'POST', '/api/passkey/options', {});
+  const l = await a.call('', 'POST', '/api/passkey/connexion', { challengeId: o2.json.challengeId, response: { id } });
+  auth.mock.restore();
+  return { registered: 200, admin: (await a.call(l.cookie!, 'GET', '/api/admin/test')).status };
+}
+
+test('E. admin Tailscale validé : jamais sa dernière passkey supprimée, donc pas de passkey fabriquée ensuite', async () => {
+  process.env.TRUST_PROXY = '1';
+  resetRateLimits();
+  try {
+    const db = newDb();
+    const u = realAdmin(db, 'g2', 'chef');
+    realAdmin(db, 'g9', 'autre'); // un 2e vrai admin : le refus ne vient pas de la règle du dernier admin
+    db.prepare('UPDATE users SET tailscale_validated_at = ? WHERE id = ?').run(Date.now(), u.id);
+    const a = await proxiedApp(db);
+    const s = `tg_session=${createSession(db, u.id)}`;
+    assert.equal((await a.call(s, 'GET', '/api/admin/test', undefined, '100.64.0.7')).status, 200, 'accès admin depuis Tailscale');
+    const del = await a.call(s, 'DELETE', '/api/compte/passkeys/pk-chef', undefined, '100.64.0.7');
+    assert.equal(del.status, 409);
+    assert.equal(del.json.code, 'LAST_PASSKEY');
+    assert.deepEqual(await takeover(a, s, 'att2'), { registered: 403, admin: null }, 'hors Tailscale, session non élevée');
+    // Remplacer : ajouter d'abord (accès admin), puis la première peut partir.
+    const reg = mock.method(webauthn, 'verifyRegistrationResponse', async () => ({
+      verified: true, registrationInfo: { credential: { id: 'neuve', publicKey: new Uint8Array([9]), counter: 0, transports: [] } },
+    }));
+    const o = await a.call(s, 'POST', '/api/compte/passkeys/options', {}, '100.64.0.7');
+    assert.equal((await a.call(s, 'POST', '/api/compte/passkeys', { challengeId: o.json.challengeId, response: { id: 'neuve' } }, '100.64.0.7')).status, 200);
+    reg.mock.restore();
+    assert.equal((await a.call(s, 'DELETE', '/api/compte/passkeys/pk-chef', undefined, '100.64.0.7')).status, 200);
+    a.close();
+  } finally {
+    delete process.env.TRUST_PROXY;
+  }
+});
+
+test('F. promotion : aucun droit admin avant l\'enrôlement (code unique 1 h + passkey)', async () => {
+  resetRateLimits();
+  const db = newDb();
+  const boss = realAdmin(db, 'g3', 'boss2');
+  const u = google(db, 'g4', 'promu');
+  assert.throws(() => setRole(db, u.id, 'admin'), (e: AccountError) => e.code === 'ENROLLMENT_REQUIRED', 'pas de rôle admin sans passkey');
+  const a = await proxiedApp(db);
+  const bs = `tg_session=${createSession(db, boss.id)}`;
+  elevateSession(db, sha256(bs.slice('tg_session='.length)), false);
+  const promo = await a.call(bs, 'PATCH', `/api/admin/users/${u.id}`, { role: 'admin' });
+  assert.equal(promo.status, 200);
+  assert.equal(promo.json.user.role, 'user', 'la promotion ne donne rien tout de suite');
+  const { code } = promo.json.enrollment;
+  assert.ok(code && promo.json.enrollment.expiresAt > Date.now());
+  assert.ok(!JSON.stringify((await a.call(bs, 'GET', '/api/admin/users')).json).includes(code), 'code affiché une seule fois');
+
+  const s = `tg_session=${createSession(db, u.id)}`;
+  assert.equal((await a.call(s, 'GET', '/api/admin/test')).status, 403, 'session Google du promu : pas d\'admin');
+  assert.equal((await takeover(a, s, 'att3')).admin, 403, 'une passkey ordinaire ne donne pas l\'admin');
+  assert.equal((await a.call(s, 'POST', '/api/compte/enrolement-admin/options', { code: 'faux' })).status, 401);
+  // Code expiré : refusé.
+  assert.equal(
+    checkAdminEnrollment(db, u.id, code, Date.now() + ENROLL_CODE_TTL_MS + 1), false);
+
+  const reg = mock.method(webauthn, 'verifyRegistrationResponse', async () => ({
+    verified: true, registrationInfo: { credential: { id: 'enrol', publicKey: new Uint8Array([9]), counter: 0, transports: [] } },
+  }));
+  const o = await a.call(s, 'POST', '/api/compte/enrolement-admin/options', { code });
+  assert.equal(o.status, 200);
+  const done = await a.call(s, 'POST', '/api/compte/enrolement-admin', { code, challengeId: o.json.challengeId, response: { id: 'enrol' } });
+  assert.equal(done.status, 200);
+  assert.equal(done.json.user.role, 'admin');
+  assert.equal((await a.call(s, 'GET', '/api/admin/test')).status, 200, 'admin après enrôlement (session élevée)');
+  const again = await a.call(s, 'POST', '/api/compte/enrolement-admin/options', { code });
+  assert.equal(again.status, 401, 'code à usage unique');
+  reg.mock.restore();
+
+  // Rétrograder annule un enrôlement en attente.
+  const v = google(db, 'g5', 'autre2');
+  const p2 = await a.call(bs, 'PATCH', `/api/admin/users/${v.id}`, { role: 'admin' });
+  await a.call(bs, 'PATCH', `/api/admin/users/${v.id}`, { role: 'user' });
+  const sv = `tg_session=${createSession(db, v.id)}`;
+  assert.equal((await a.call(sv, 'POST', '/api/compte/enrolement-admin/options', { code: p2.json.enrollment.code })).status, 401);
+  a.close();
+});
+
+test('3. completeAdmins : un admin promu sans passkey ne bloque ni le code d\'amorçage ni un reset en attente', () => {
+  const db = newDb();
+  const half = createUser(db, 'Moitié', { role: 'admin' }); // à moitié enrôlé : pas de passkey
+  assert.ok(ensureBootstrap(db, { log: () => {} }), 'code d\'amorçage généré');
+  const reset = ensureBootstrap(db, { reset: true, log: () => {} })!;
+  assert.equal(ensureBootstrap(db, { log: () => {} }), null, 'code existant, pas de nouveau');
+  assert.ok(consumeBootstrapCode(db, reset), 'reset en attente pas effacé');
+  assert.equal(half.role, 'admin');
+});

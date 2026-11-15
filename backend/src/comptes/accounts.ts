@@ -260,12 +260,12 @@ export const countPasskeys = (db: Db, userId: number) =>
   (db.prepare('SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?').get(userId) as { n: number }).n;
 
 // Vrai admin : amorçage terminé et au moins une passkey (un amorçage en cours ne compte pas).
-const activeAdmins = (db: Db) =>
+export const realAdminCount = (db: Db) =>
   (db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0 AND bootstrap = 0 AND id IN (SELECT user_id FROM passkeys)").get() as { n: number }).n;
 
 function assertNotLastAdmin(db: Db, user: User) {
   const real = user.role === 'admin' && !user.disabled && !user.bootstrap && countPasskeys(db, user.id) > 0;
-  if (real && activeAdmins(db) <= 1) {
+  if (real && realAdminCount(db) <= 1) {
     throw new AccountError('LAST_ADMIN', 'Impossible : c\'est le dernier administrateur.', 409);
   }
 }
@@ -285,6 +285,10 @@ export function setRole(db: Db, userId: number, role: unknown): User {
     const user = getUser(db, userId);
     if (!user) throw new AccountError('NOT_FOUND', 'Compte introuvable.', 404);
     if (role === 'user') assertNotLastAdmin(db, user);
+    // Le rôle admin ne s'active qu'après l'enrôlement (code + passkey) : jamais sans passkey.
+    if (role === 'admin' && user.role !== 'admin' && countPasskeys(db, userId) === 0) {
+      throw new AccountError('ENROLLMENT_REQUIRED', "Le compte doit d'abord s'enrôler avec une passkey.", 409);
+    }
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
     return getUser(db, userId)!;
   });
@@ -308,7 +312,8 @@ export function listUsers(db: Db, search = '') {
   const q = `%${search.trim().toLowerCase().replace(/^@/, '').replace(/[%_\\]/g, (c) => '\\' + c)}%`;
   return db.prepare(`SELECT u.id, u.username, u.display_name AS displayName, u.role, u.disabled, u.created_at AS createdAt,
       (SELECT GROUP_CONCAT(provider) FROM identities i WHERE i.user_id = u.id) AS providers,
-      (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkeys
+      (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkeys,
+      EXISTS (SELECT 1 FROM settings s WHERE s.key = '_admin_enroll_' || u.id) AS enrollPending
     FROM users u
     WHERE COALESCE(u.username, '') LIKE ? ESCAPE '\\' OR LOWER(u.display_name) LIKE ? ESCAPE '\\'
     ORDER BY u.id LIMIT 200`).all(q, q);

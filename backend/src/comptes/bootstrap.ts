@@ -1,23 +1,20 @@
 import { Db, transaction } from './db';
-import { createUser, User } from './accounts';
+import { createUser, realAdminCount, User } from './accounts';
 import { randomToken, sameHash, sha256 } from './secrets';
 
 const KEY = '_bootstrap_code';
 export const RESET_CODE_TTL_MS = 60 * 60 * 1000;
 
-/** Valeur stockée : `empreinte` (premier amorçage) ou `empreinte|expiration` (code de reset). */
-const pendingRaw = (db: Db) =>
-  (db.prepare('SELECT value FROM settings WHERE key = ?').get(KEY) as { value: string } | undefined)?.value ?? null;
+/** Valeur stockée : `empreinte` (premier amorçage) ou `empreinte|expiration` (reset, enrôlement). */
+const pendingRaw = (db: Db, key = KEY) =>
+  (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value ?? null;
 
-const pendingHash = (db: Db, nowMs = Date.now()) => {
-  const raw = pendingRaw(db);
+const pendingHash = (db: Db, nowMs = Date.now(), key = KEY) => {
+  const raw = pendingRaw(db, key);
   if (!raw) return null;
   const [hash, expires] = raw.split('|');
   return expires && nowMs >= Number(expires) ? null : hash;
 };
-
-const completeAdmins = (db: Db) =>
-  (db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND bootstrap = 0 AND disabled = 0").get() as { n: number }).n;
 
 /**
  * Au démarrage : sans administrateur (ou avec ADMIN_BOOTSTRAP_RESET=1), génère un code d'accès
@@ -27,7 +24,7 @@ const completeAdmins = (db: Db) =>
 export function ensureBootstrap(db: Db, opts: { reset?: boolean; log?: (msg: string) => void } = {}): string | null {
   const log = opts.log ?? console.log;
   if (!opts.reset) {
-    if (completeAdmins(db) > 0) {
+    if (realAdminCount(db) > 0) {
       // Un code de reset non utilisé ne survit pas à un redémarrage sans ADMIN_BOOTSTRAP_RESET.
       db.prepare('DELETE FROM settings WHERE key = ?').run(KEY);
       return null;
@@ -72,3 +69,30 @@ export function consumeBootstrapCode(db: Db, code: unknown, nowMs = Date.now()):
 export function completeBootstrap(db: Db, userId: number): void {
   db.prepare('UPDATE users SET bootstrap = 0 WHERE id = ?').run(userId);
 }
+
+// --- Enrôlement d'un admin promu : code à usage unique (1 h), remis par un autre canal ---
+export const ENROLL_CODE_TTL_MS = 60 * 60 * 1000;
+const enrollKey = (userId: number) => `_admin_enroll_${userId}`;
+
+/** Génère le code d'enrôlement (remplace le précédent) ; seule l'empreinte est gardée. */
+export function startAdminEnrollment(db: Db, userId: number, nowMs = Date.now()): { code: string; expiresAt: number } {
+  const code = randomToken(20);
+  const expiresAt = nowMs + ENROLL_CODE_TTL_MS;
+  db.prepare('INSERT INTO settings (key, value, secret) VALUES (?, ?, 0) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(enrollKey(userId), `${sha256(code)}|${expiresAt}`);
+  return { code, expiresAt };
+}
+
+export function checkAdminEnrollment(db: Db, userId: number, code: unknown, nowMs = Date.now()): boolean {
+  if (typeof code !== 'string' || code.length > 100) return false;
+  const stored = pendingHash(db, nowMs, enrollKey(userId));
+  return !!stored && sameHash(stored, sha256(code.trim()));
+}
+
+/** Un seul usage : vrai seulement pour la requête qui efface le code. */
+export function consumeAdminEnrollment(db: Db, userId: number, code: unknown, nowMs = Date.now()): boolean {
+  if (!checkAdminEnrollment(db, userId, code, nowMs)) return false;
+  return db.prepare('DELETE FROM settings WHERE key = ? AND value = ?').run(enrollKey(userId), pendingRaw(db, enrollKey(userId))).changes === 1;
+}
+
+export const cancelAdminEnrollment = (db: Db, userId: number) => void db.prepare('DELETE FROM settings WHERE key = ?').run(enrollKey(userId));

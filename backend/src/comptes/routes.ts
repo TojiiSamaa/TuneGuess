@@ -3,7 +3,7 @@ import { Db } from './db';
 import {
   AccountError, deleteUser, EXTERNAL_PROVIDERS, ExternalProvider, getUser, isExternalProvider, isLoginProvider, isUsernameAvailable,
   linkExternal, listConnections, listUsers, loginWithExternal, setDisabled, setRole, setUsername, suggestUsername, unlinkExternal,
-  countPasskeys, updateProfile, User, validateUsername,
+  updateProfile, User, validateUsername,
 } from './accounts';
 import { CONFIG_KEYS, ConfigKey, getConfig, providerStatus, publicUrl, setConfig } from './config';
 import {
@@ -11,7 +11,9 @@ import {
   isTailscaleIp, listSessions, readCookie, resolveSession, revokeSession, SESSION_COOKIE, SESSION_TTL_MS,
 } from './sessions';
 import { authorizeUrl, callbackUrl, exchangeCode, lastfmProfileByName, OAUTH_PROVIDERS, OAuthProvider } from './oauth';
-import { completeBootstrap, consumeBootstrapCode } from './bootstrap';
+import {
+  cancelAdminEnrollment, checkAdminEnrollment, completeBootstrap, consumeAdminEnrollment, consumeBootstrapCode, startAdminEnrollment,
+} from './bootstrap';
 import {
   authenticationOptions, deletePasskey, listPasskeys, registrationOptions, relyingParty, verifyAuthentication, verifyRegistration,
 } from './passkeys';
@@ -258,11 +260,10 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
 
   // Admin terminé : ajouter ou retirer une passkey exige l'accès admin complet, sinon une session
   // simplement connectée (Google, cookie volé) se fabriquerait une passkey puis l'admin.
-  // L'amorçage garde sa première passkey ; un admin sans aucune passkey peut en créer une.
+  // Seules exceptions : l'amorçage (code unique) et l'enrôlement d'un promu (code unique, routes à part).
   const passkeyChange: express.RequestHandler = (req, res, next) => {
     const user = req.auth!.user;
     if (user.role !== 'admin' || user.bootstrap || access(req) === 'ok') return next();
-    if (req.method === 'POST' && countPasskeys(db, user.id) === 0) return next();
     res.status(403).json({ error: 'Confirmez d\'abord avec une passkey existante (ou depuis Tailscale validé).', code: 'PASSKEY_REQUIRED' });
   };
 
@@ -284,6 +285,28 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
   router.delete('/api/compte/passkeys/:id', needs('full'), passkeyChange, (req, res) => {
     deletePasskey(db, getUser(db, req.auth!.user.id)!, req.params.id);
     res.json({ ok: true });
+  });
+
+  // Enrôlement d'un promu : le code remis par l'admin + une passkey créée maintenant activent le rôle.
+  const enrollCode = (req: Request) => {
+    if (!checkAdminEnrollment(db, req.auth!.user.id, req.body?.code)) {
+      throw new AccountError('ENROLLMENT_INVALID', 'Code d\'enrôlement invalide ou expiré.', 401);
+    }
+  };
+  router.post('/api/compte/enrolement-admin/options', needs('full'), limit('enroll', 10, 15 * 60_000), async (req, res) => {
+    enrollCode(req);
+    res.json(await registrationOptions(db, rp(), req.auth!.user));
+  });
+  router.post('/api/compte/enrolement-admin', needs('full'), limit('enroll', 10, 15 * 60_000), async (req, res) => {
+    const { user, session } = req.auth!;
+    enrollCode(req);
+    await verifyRegistration(db, rp(), user, req.body?.challengeId, req.body?.response, req.body?.name);
+    if (!consumeAdminEnrollment(db, user.id, req.body?.code)) {
+      throw new AccountError('ENROLLMENT_INVALID', 'Code d\'enrôlement déjà utilisé.', 401);
+    }
+    setRole(db, user.id, 'admin');
+    elevateSession(db, session.id_hash, isTailscaleIp(clientIp(req)));
+    res.json({ ok: true, user: publicUser(getUser(db, user.id)!) });
   });
 
   // Élévation admin : assertion fraîche liée à la session, 12 h max.
@@ -427,7 +450,15 @@ export function createAccountRouter(db: Db): { router: Router; requireAdmin: exp
     const id = Number(req.params.id);
     let user = getUser(db, id);
     if (!user) throw new AccountError('NOT_FOUND', 'Compte introuvable.', 404);
-    if (req.body?.role !== undefined) user = setRole(db, id, req.body.role);
+    // Promotion : aucun droit tout de suite, seulement un code d'enrôlement affiché une fois à l'admin.
+    if (req.body?.role === 'admin' && user.role !== 'admin') {
+      if (user.disabled) throw new AccountError('USER_DISABLED', 'Réactivez d\'abord ce compte.', 409);
+      return void res.json({ user: publicUser(user), enrollment: startAdminEnrollment(db, id) });
+    }
+    if (req.body?.role !== undefined) {
+      user = setRole(db, id, req.body.role);
+      if (user.role === 'user') cancelAdminEnrollment(db, id);
+    }
     if (typeof req.body?.disabled === 'boolean') user = setDisabled(db, id, req.body.disabled);
     res.json({ user: publicUser(user) });
   });
