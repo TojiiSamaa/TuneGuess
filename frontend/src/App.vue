@@ -4,7 +4,6 @@ import { useRouter, useRoute } from 'vue-router';
 import { useGameStore } from '@/stores/game';
 import AppHeader from '@/components/AppHeader.vue';
 import AppFooter from '@/components/AppFooter.vue';
-import AnimatedBackground from '@/components/AnimatedBackground.vue';
 
 const router = useRouter();
 const route = useRoute();

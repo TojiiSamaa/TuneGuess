@@ -5,7 +5,6 @@ import { sanitizeInput, MAX_NAME_LENGTH } from '@/utils/sanitize';
 import { API_BASE } from '@/config';
 
 let listenersBound = false;
-let roomsInterval = null;
 let oauthHandled = false;
 
 export const useGameStore = defineStore('game', () => {
@@ -325,7 +324,7 @@ export const useGameStore = defineStore('game', () => {
     });
 
     refreshActiveRooms();
-    roomsInterval = setInterval(refreshActiveRooms, 8000);
+    setInterval(refreshActiveRooms, 8000);
   }
 
   function initFromRoute(router) {

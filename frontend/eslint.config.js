@@ -1,29 +1,13 @@
 import js from '@eslint/js'
 import globals from 'globals'
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import { defineConfig, globalIgnores } from 'eslint/config'
+import pluginVue from 'eslint-plugin-vue'
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{js,jsx}'],
-    extends: [
-      js.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-    ],
-    languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
-      parserOptions: {
-        ecmaVersion: 'latest',
-        ecmaFeatures: { jsx: true },
-        sourceType: 'module',
-      },
-    },
-    rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-    },
-  },
-])
+export default [
+  { ignores: ['dist'] },
+  js.configs.recommended,
+  // essential = règles de justesse ; les règles de mise en forme (recommended) ne sont pas imposées.
+  ...pluginVue.configs['flat/essential'],
+  { languageOptions: { globals: globals.browser } },
+  { files: ['*.config.js'], languageOptions: { globals: globals.node } },
+  { rules: { 'no-unused-vars': ['error', { caughtErrors: 'none' }] } },
+]

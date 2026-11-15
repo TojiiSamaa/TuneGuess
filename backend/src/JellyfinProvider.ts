@@ -53,7 +53,7 @@ export class JellyfinProvider implements MusicProvider {
     const userId = encodeURIComponent(options.userId);
     const url = `${cleanUrl}/Users/${userId}/Items?includeItemTypes=Audio&recursive=true&limit=50&sortBy=PlayCount&sortOrder=Descending&filters=IsPlayed`;
     const response = await outbound.get(url, { headers: this.clientHeaders(token) });
-    let items = response.data.Items || [];
+    const items = response.data.Items || [];
 
     if (items.length < 20) {
       const fallbackUrl = `${cleanUrl}/Users/${userId}/Items?includeItemTypes=Audio&recursive=true&limit=50&sortBy=Random`;
@@ -81,7 +81,7 @@ export class JellyfinProvider implements MusicProvider {
     const userId = encodeURIComponent(options.userId);
     const url = `${cleanUrl}/Users/${userId}/Items?includeItemTypes=Audio&recursive=true&limit=50&sortBy=DatePlayed&sortOrder=Descending&filters=IsPlayed`;
     const response = await outbound.get(url, { headers: this.clientHeaders(token) });
-    let items = response.data.Items || [];
+    const items = response.data.Items || [];
 
     if (items.length < 20) {
       const fallbackUrl = `${cleanUrl}/Users/${userId}/Items?includeItemTypes=Audio&recursive=true&limit=50&sortBy=DateCreated&sortOrder=Descending`;
