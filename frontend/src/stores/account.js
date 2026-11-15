@@ -54,6 +54,14 @@ export const useAccountStore = defineStore('account', {
       this.user = user;
       await this.load();
     },
+    /** Enrôlement d'un promu : code remis par l'admin + passkey créée maintenant ; le rôle admin s'active ensuite. */
+    async enrollAdmin(code, name) {
+      const { challengeId, options } = await api('/api/compte/enrolement-admin/options', { method: 'POST', body: { code } });
+      const response = await startRegistration({ optionsJSON: options });
+      const { user } = await api('/api/compte/enrolement-admin', { method: 'POST', body: { code, challengeId, response, name } });
+      this.user = user;
+      await this.load();
+    },
     /** Assertion fraîche pour l'accès admin hors Tailscale (12 h, liée à la session). */
     async elevate() {
       const { challengeId, options } = await api('/api/compte/elevation/options', { method: 'POST', body: {} });

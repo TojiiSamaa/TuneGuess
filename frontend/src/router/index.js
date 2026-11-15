@@ -7,6 +7,7 @@ import CreditsView from '@/views/CreditsView.vue';
 import LegalView from '@/views/LegalView.vue';
 import AdminView from '@/views/admin/AdminView.vue';
 import AmorcageView from '@/views/admin/AmorcageView.vue';
+import EnrolementView from '@/views/admin/EnrolementView.vue';
 import ConnexionView from '@/views/compte/ConnexionView.vue';
 import BienvenueView from '@/views/compte/BienvenueView.vue';
 import CompteView from '@/views/compte/CompteView.vue';
@@ -50,6 +51,11 @@ const router = createRouter({
       path: '/admin/amorcage',
       name: 'admin-amorcage',
       component: AmorcageView,
+    },
+    {
+      path: '/admin/enrolement',
+      name: 'admin-enrolement',
+      component: EnrolementView,
     },
     {
       path: '/connexion',
