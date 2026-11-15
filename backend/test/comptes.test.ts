@@ -72,7 +72,9 @@ describe('chiffrement des jetons', () => {
     const sealed = encrypt('jeton-secret');
     assert.notEqual(sealed, 'jeton-secret');
     assert.equal(decrypt(sealed), 'jeton-secret');
-    const tampered = sealed.slice(0, -2) + (sealed.endsWith('A') ? 'B' : 'A') + sealed.slice(-1);
+    // Le caractère remplacé est toujours différent de l'original (avant : 1 chance sur 64 de ne rien changer).
+    const tampered = sealed.slice(0, -2) + (sealed.at(-2) === 'A' ? 'B' : 'A') + sealed.slice(-1);
+    assert.notEqual(tampered, sealed);
     assert.throws(() => decrypt(tampered));
   });
 });

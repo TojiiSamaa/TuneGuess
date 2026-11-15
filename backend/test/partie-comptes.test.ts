@@ -99,7 +99,7 @@ test('partie à deux comptes : prêts, tirage alterné, score au temps, historiq
     const wrong = [a.id, b.id, guest.id].find((id) => id !== owner)!;
     if (owner !== a.id) a.emit('answer', { playerId: owner });
     if (owner !== b.id) b.emit('answer', { playerId: wrong });
-    if (owner !== guest.id) guest.emit('answer', { playerId: owner });
+    if (owner !== guest.id) guest.emit('answer', { playerId: wrong }); // faux : Alice reste première quel que soit le tirage
     if (owner !== a.id) {
       const resA = await a.next('answer_result');
       assert.equal(resA.correct, true);
