@@ -148,6 +148,29 @@ Les images Docker fournies dans `frontend/Dockerfile` et `backend/Dockerfile` ut
 
 ---
 
+## Intégration continue (CI/CD)
+
+`.github/workflows/ci-qualite.yml` tourne sur chaque PR vers `main`. Ses catégories sont des jobs parallèles :
+
+| Catégorie | Ce qui est vérifié | En local |
+|---|---|---|
+| Lint | ESLint : `typescript-eslint` (backend), `eslint-plugin-vue` essential (frontend), zéro erreur | `npm run lint` (dans `backend/` et `frontend/`) |
+| Types | `tsc --noEmit` du backend (le frontend est en JavaScript) | `cd backend && npm run typecheck` |
+| Tests et couverture | `node:test` avec couverture native ; échec sous 68 % lignes, 80 % branches, 75 % fonctions ; `lcov.info` en artefact | `cd backend && npm run test:coverage` |
+| Build | `npm run build` backend et frontend (`dist` en artefact, non publié) | `npm run build` |
+| Dépendances | `npm audit --omit=dev --audit-level=high` (back et front) ; `dependency-review-action` sur les PR | `npm audit --omit=dev --audit-level=high` |
+| Analyse de code | CodeQL `javascript-typescript` | (GitHub seulement) |
+| Secrets | gitleaks sur tout l'historique git | `gitleaks git . --redact` |
+| Conteneurs | hadolint sur les deux Dockerfiles, puis image construite (non poussée) et scannée par Trivy (HIGH/CRITICAL corrigeables) | `hadolint backend/Dockerfile frontend/Dockerfile` ; `docker build -t tg-backend backend && trivy image --severity HIGH,CRITICAL --ignore-unfixed tg-backend` |
+| Workflows | actionlint et zizmor sur `.github/workflows` | `actionlint` ; `uvx zizmor .` |
+| Test de fumée | backend construit démarré avec des variables factices : `/robots.txt` 200, `/admin` refusé sans mot de passe (401), création d'un salon par socket.io | `cd backend && npm run build && npm run smoke` |
+
+**Publication** : `.github/workflows/publish-docker.yml` (push sur `main`, tags `v*`, lancement manuel) appelle d'abord `ci-qualite.yml` en entier, puis pousse les images `ghcr.io/<propriétaire>/tuneguess-backend` et `tuneguess-frontend` (amd64 + arm64) seulement si toutes les catégories sont vertes. Rien n'est jamais poussé depuis une PR.
+
+Les actions sont épinglées par SHA de commit (tag en commentaire) ; Dependabot (`.github/dependabot.yml`) propose chaque semaine des mises à jour groupées npm, Docker et GitHub Actions.
+
+---
+
 ## Contribuer
 
 - Ouvrez une issue pour discuter d'une nouvelle fonctionnalité ou d'un bug.

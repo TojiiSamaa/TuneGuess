@@ -41,7 +41,7 @@ export class YouTubeProvider implements MusicProvider {
   }
 
   private cleanYouTubeTitle(title: string, channel: string): { name: string; artists: string } {
-    let clean = title
+    const clean = title
       .replace(/\((Official|Lyric|Music|Audio|HD|4K|HQ)\s*(Video|Audio|Clip|Movie|Film)?\)/gi, '')
       .replace(/\[(Official|Lyric|Music|Audio|HD|4K|HQ)\s*(Video|Audio|Clip|Movie|Film)?\]/gi, '')
       .replace(/official\s*(video|audio|clip)?/gi, '')

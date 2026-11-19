@@ -7,7 +7,11 @@
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "node --import tsx --import ./test/env.ts --test test/*.test.ts"
+    "test": "node --import tsx --import ./test/env.ts --test test/*.test.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:coverage": "node --import tsx --import ./test/env.ts --test --experimental-test-coverage --test-coverage-exclude=\"test/**\" --test-coverage-lines=68 --test-coverage-branches=80 --test-coverage-functions=75 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=lcov.info test/*.test.ts",
+    "smoke": "node scripts/smoke.mjs"
   },
   "keywords": [],
   "author": "",
@@ -21,10 +25,14 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.2"
   }
 }

@@ -61,9 +61,9 @@ const normalize = (text: string) => text.normalize('NFD').toLowerCase().replace(
 
 export const findDeezerTrack = async (trackName: string, artistName: string): Promise<{ preview: string; image: string } | null> => {
   try {
-    const cleanTrack = trackName.split(/[(\[-]/)[0].trim();
+    const cleanTrack = trackName.split(/[([-]/)[0].trim();
     // Premier artiste seulement (« A, B » ou « A & B ») : celui qu'indexe Deezer.
-    const cleanArtist = artistName.split(/[(\[\-,&]/)[0].trim();
+    const cleanArtist = artistName.split(/[([\-,&]/)[0].trim();
     const wanted = normalize(cleanArtist);
 
     const response = await axios.get('https://api.deezer.com/search', {
