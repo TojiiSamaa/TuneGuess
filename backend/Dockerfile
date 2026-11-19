@@ -28,6 +28,6 @@ ENV PORT=5000
 
 EXPOSE 5000
 
-USER node
+USER 1000:1000
 
 CMD ["node", "dist/server.js"]
