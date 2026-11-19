@@ -14,7 +14,7 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.30-alpine
 
 # L'image amont suit les correctifs alpine avec du retard : on les applique au build.
-USER root
+USER 0
 RUN apk upgrade --no-cache
 USER 101
 
